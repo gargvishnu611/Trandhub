@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Trend Hub — Admin Panel</title>
+  <script src="https://www.gstatic.com/firebasejs/9.24.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.24.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.24.0/firebase-firestore-compat.js"></script>
+  <style>
+    body{font-family:Arial,Helvetica,sans-serif;background:#07121a;color:#e6eef6;margin:0;padding:18px}
+    .card{background:#0f1b24;padding:16px;border-radius:10px;margin-bottom:12px}
+    input,textarea,select{width:100%;padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,0.06);background:transparent;color:#e6eef6}
+    .btn{background:#ff9800;color:#071018;padding:8px 12px;border-radius:8px;border:none;cursor:pointer;font-weight:600}
+    .small{color:#9aa6b2;font-size:13px}
+  </style>
+</head>
+<body>
+  <h1>Trend Hub — Admin Panel</h1>
+  <div id="authArea" class="card">
+    <div id="authStatus">Checking sign-in...</div>
+    <div style="margin-top:12px"><button id="signInBtn" class="btn">Sign in with Google</button> <button id="signOutBtn" class="btn" style="display:none">Sign out</button></div>
+  </div>
+
+  <div id="adminUI" style="display:none">
+    <div class="card">
+      <h3>Add Airdrop</h3>
+      <div class="small">Title</div><input id="adTitle" />
+      <div class="small">Link (Telegram or website)</div><input id="adLink" />
+      <div class="small">Date (optional)</div><input id="adDate" />
+      <div style="margin-top:8px"><button id="addAirdrop" class="btn">Add Airdrop</button></div>
+    </div>
+
+    <div class="card">
+      <h3>Add News</h3>
+      <div class="small">Headline</div><input id="newsTitle" />
+      <div class="small">Link (optional)</div><input id="newsLink" />
+      <div style="margin-top:8px"><button id="addNews" class="btn">Add News</button></div>
+    </div>
+
+    <div class="card">
+      <h3>Manage Airdrops (click to delete)</h3>
+      <div id="manageAirdrops"></div>
+    </div>
+
+    <div class="card">
+      <h3>Manage News (click to delete)</h3>
+      <div id="manageNews"></div>
+    </div>
+  </div>
+
+<script>
+/* Firebase config - SAME as index.html */
+const firebaseConfig = {
+  apiKey: "AIzaSyAbk0t-AHFk3M7D8fHxwCwSvHKamPMac-o",
+  authDomain: "trendhub-44381.firebaseapp.com",
+  projectId: "trendhub-44381",
+  storageBucket: "trendhub-44381.firebasestorage.app",
+  messagingSenderId: "1048200840802",
+  appId: "1:1048200840802:web:0bcc3d9a86d51b4444733b",
+  measurementId: "G-75M36D4TQ9"
+};
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+
+const ADMINS = ["gargvishnu611@gmail.com","shivgarg184@gmail.com"];
+
+const signInBtn = document.getElementById('signInBtn');
+const signOutBtn = document.getElementById('signOutBtn');
+const authStatus = document.getElementById('authStatus');
+const adminUI = document.getElementById('adminUI');
+
+auth.onAuthStateChanged(user=>{
+  if(user){
+    authStatus.innerText = 'Signed in: ' + user.email;
+    signInBtn.style.display = 'none';
+    signOutBtn.style.display = 'inline-block';
+    if(ADMINS.includes(user.email)) {
+      adminUI.style.display = 'block';
+      loadManageLists();
+    } else {
+      adminUI.style.display = 'none';
+      alert('You are signed in but not an admin: ' + user.email);
+    }
+  } else {
+    authStatus.innerText = 'Not signed in';
+    signInBtn.style.display = 'inline-block';
+    signOutBtn.style.display = 'none';
+    adminUI.style.display = 'none';
+  }
+});
+
+signInBtn.addEventListener('click', async ()=>{
+  const provider = new firebase.auth.GoogleAuthProvider();
+  try{
+    await auth.signInWithPopup(provider);
+  }catch(e){ alert('Sign-in failed: '+e.message) }
+});
+signOutBtn.addEventListener('click', ()=>auth.signOut());
+
+/* Add airdrop */
+document.getElementById('addAirdrop').addEventListener('click', async ()=>{
+  const title = document.getElementById('adTitle').value.trim();
+  const link = document.getElementById('adLink').value.trim();
+  const date = document.getElementById('adDate').value.trim();
+  if(!title) return alert('Title required');
+  await db.collection('airdrops').add({ title, link, date, author: auth.currentUser.email, createdAt: firebase.firestore.FieldValue.serverTimestamp() });
+  alert('Airdrop added');
+  document.getElementById('adTitle').value=''; document.getElementById('adLink').value=''; document.getElementById('adDate').value='';
+});
+
+/* Add news */
+document.getElementById('addNews').addEventListener('click', async ()=>{
+  const title = document.getElementById('newsTitle').value.trim();
+  const link = document.getElementById('newsLink').value.trim();
+  if(!title) return alert('Headline required');
+  await db.collection('news').add({ title, link, time: new Date().toLocaleString(), author: auth.currentUser.email, createdAt: firebase.firestore.FieldValue.serverTimestamp() });
+  alert('News added');
+  document.getElementById('newsTitle').value=''; document.getElementById('newsLink').value='';
+});
+
+/* Manage lists: render with delete buttons */
+async function loadManageLists(){
+  const airdrops = await db.collection('airdrops').orderBy('createdAt','desc').get();
+  const elA = document.getElementById('manageAirdrops'); elA.innerHTML='';
+  airdrops.forEach(doc=>{
+    const d = doc.data();
+    const div = document.createElement('div'); div.style.padding='8px'; div.style.borderBottom='1px solid rgba(255,255,255,0.03)';
+    div.innerHTML = `<strong>${d.title}</strong> <div class="small">${d.date||''} • ${d.author||''}</div><div style="margin-top:6px"><button class="btn" onclick="deleteAirdrop('${doc.id}')">Delete</button></div>`;
+    elA.appendChild(div);
+  });
+
+  const news = await db.collection('news').orderBy('createdAt','desc').get();
+  const elN = document.getElementById('manageNews'); elN.innerHTML='';
+  news.forEach(doc=>{
+    const d = doc.data();
+    const div = document.createElement('div'); div.style.padding='8px'; div.style.borderBottom='1px solid rgba(255,255,255,0.03)';
+    div.innerHTML = `<strong>${d.title}</strong> <div class="small">${d.time||''} • ${d.author||''}</div><div style="margin-top:6px"><button class="btn" onclick="deleteNews('${doc.id}')">Delete</button></div>`;
+    elN.appendChild(div);
+  });
+}
+
+window.deleteAirdrop = async function(id){
+  if(!confirm('Delete airdrop?')) return;
+  await db.collection('airdrops').doc(id).delete();
+  loadManageLists();
+}
+window.deleteNews = async function(id){
+  if(!confirm('Delete news item?')) return;
+  await db.collection('news').doc(id).delete();
+  loadManageLists();
+}
+</script>
+</body>
+</html>
