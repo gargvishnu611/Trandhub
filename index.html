@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Trend Hub — Crypto (CoinMarketCap style)</title>
+  <meta name="description" content="Trend Hub — live crypto prices, shared airdrops & news" />
+
+  <!-- Firebase compat -->
+  <script src="https://www.gstatic.com/firebasejs/9.24.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.24.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.24.0/firebase-firestore-compat.js"></script>
+
+  <!-- TensorFlow.js -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.9.0/dist/tf.min.js"></script>
+
+  <style>
+    /* Basic CoinMarketCap-like light theme */
+    :root{
+      --bg:#f7f9fb; --card:#ffffff; --muted:#6b7280; --accent:#1f7bd6; --up:#16a34a; --down:#ef4444;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:#0b1220}
+    header{background:linear-gradient(90deg,#ffffff,#f3f6fb);padding:18px;border-bottom:1px solid #e6eef6;display:flex;align-items:center;gap:16px}
+    .brand{display:flex;align-items:center;gap:12px}
+    .logo{width:46px;height:46px;border-radius:8px;background:var(--accent);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800}
+    h1{font-size:18px;margin:0}
+    header .right{margin-left:auto;display:flex;gap:12px;align-items:center}
+    .btn{background:var(--accent);color:#fff;padding:8px 12px;border-radius:8px;border:none;cursor:pointer;font-weight:600}
+    .btn.secondary{background:transparent;border:1px solid rgba(0,0,0,0.06);color:var(--muted)}
+    main{padding:18px;max-width:1100px;margin:0 auto}
+    .controls{display:flex;gap:12px;align-items:center;margin-bottom:12px}
+    .card{background:var(--card);padding:14px;border-radius:10px;box-shadow:0 6px 20px rgba(11,17,32,0.04)}
+    .small{color:var(--muted);font-size:13px}
+    input,select{padding:8px;border-radius:8px;border:1px solid #e6eef6}
+    table{width:100%;border-collapse:collapse;margin-top:12px}
+    th,td{padding:10px;border-bottom:1px solid #f1f5f9;text-align:left}
+    th{font-size:13px;color:var(--muted);font-weight:700}
+    td.price{font-weight:700}
+    td.change.up{color:var(--up)}
+    td.change.down{color:var(--down)}
+    .rightcol{width:320px;float:right}
+    .clearfix::after{content:"";display:block;clear:both}
+    .panel-list{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+    .panel-item{background:#fff;padding:10px;border-radius:8px;border:1px solid #f1f5f9}
+    footer{text-align:center;color:var(--muted);padding:20px;margin-top:24px}
+    @media(max-width:900px){
+      .rightcol{width:100%;float:none;margin-top:12px}
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <div class="logo">TH</div>
+      <div>
+        <h1>Trend Hub — Crypto</h1>
+        <div class="small">Live prices • Shared airdrops & news</div>
+      </div>
+    </div>
+
+    <div class="right">
+      <div class="small" id="clock">--:--:--</div>
+      <button class="btn" id="loginBtn">Sign in</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="clearfix">
+      <div style="flex:1">
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div style="display:flex;gap:12px;align-items:center">
+              <input id="searchInput" placeholder="Search coin (name or symbol)" style="width:320px" />
+              <button class="btn" id="refreshBtn">Refresh</button>
+              <div class="small">Top</div>
+              <select id="limitSelect">
+                <option value="20">20</option>
+                <option value="50" selected>50</option>
+                <option value="100">100</option>
+              </select>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <label class="small">Update</label>
+              <select id="intervalSelect">
+                <option value="1000">1s</option>
+                <option value="2000">2s</option>
+                <option value="3000">3s</option>
+                <option value="5000" selected>5s</option>
+                <option value="10000">10s</option>
+              </select>
+              <button class="btn secondary" id="toggleAuto">Pause</button>
+            </div>
+          </div>
+
+          <table id="coinsTable" aria-live="polite">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Coin</th>
+                <th>Price</th>
+                <th>24h %</th>
+                <th>Market Cap</th>
+                <th>Prediction</th>
+              </tr>
+            </thead>
+            <tbody id="coinsBody">
+              <!-- filled dynamically -->
+            </tbody>
+          </table>
+        </div>
+
+        <div class="card" style="margin-top:12px">
+          <h3 style="margin:0 0 8px 0">Model Prediction (TF.js)</h3>
+          <div class="small">A small client-side model trains automatically using recent price windows. This is demo only — not financial advice.</div>
+          <div id="modelInfo" class="small" style="margin-top:8px;color:var(--muted)"></div>
+        </div>
+      </div>
+
+      <div class="rightcol">
+        <div class="card">
+          <h3 style="margin:0 0 8px 0">Shared Airdrops</h3>
+          <div id="airdropsList" class="panel-list"></div>
+        </div>
+
+        <div class="card" style="margin-top:12px">
+          <h3 style="margin:0 0 8px 0">Shared News</h3>
+          <div id="newsList" class="panel-list"></div>
+        </div>
+
+        <div class="card" style="margin-top:12px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div><strong>Admin</strong></div>
+            <div><button class="btn secondary" id="openAdminBtn" style="display:none">Admin Panel</button></div>
+          </div>
+          <div class="small" style="margin-top:8px">Only admins can add or delete items.</div>
+        </div>
+      </div>
+    </div>
+
+    <footer>Trend Hub — Live Crypto Prices • Shared airdrops & news • Not financial advice</footer>
+  </main>
+
+<!-- modal -->
+<div id="modal" style="display:none;position:fixed;inset:0;background:rgba(11,17,32,0.6);align-items:center;justify-content:center;z-index:50">
+  <div style="background:#fff;padding:16px;border-radius:10px;width:95%;max-width:720px;color:#0b1220">
+    <div id="modalContent"></div>
+    <div style="text-align:right;margin-top:12px"><button class="btn secondary" id="closeModal">Close</button></div>
+  </div>
+</div>
+
+<script>
+/* ===========================
+   User-provided Firebase config (already given earlier)
+   =========================== */
+const firebaseConfig = {
+  apiKey: "AIzaSyAbk0t-AHFk3M7D8fHxwCwSvHKamPMac-o",
+  authDomain: "trendhub-44381.firebaseapp.com",
+  projectId: "trendhub-44381",
+  storageBucket: "trendhub-44381.firebasestorage.app",
+  messagingSenderId: "1048200840802",
+  appId: "1:1048200840802:web:0bcc3d9a86d51b4444733b",
+  measurementId: "G-75M36D4TQ9"
+};
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+
+/* Admin emails */
+const ADMINS = ["gargvishnu611@gmail.com","shivgarg184@gmail.com"];
+
+/* Utilities */
+const $ = id=>document.getElementById(id);
+function fmt(n){ return Number(n).toLocaleString(undefined, {maximumFractionDigits: 8}) }
+
+/* Clock */
+function updateClock(){ $('clock').innerText = new Date().toLocaleString(); }
+setInterval(updateClock,1000); updateClock();
+
+/* Auth UI */
+const loginBtn = $('loginBtn');
+const openAdminBtn = $('openAdminBtn');
+
+auth.onAuthStateChanged(user=>{
+  if(user){
+    loginBtn.innerText = 'Sign out (' + (user.email||'') + ')';
+    if(ADMINS.includes(user.email)) openAdminBtn.style.display = 'inline-block';
+    else openAdminBtn.style.display = 'none';
+  } else {
+    loginBtn.innerText = 'Sign in';
+    openAdminBtn.style.display = 'none';
+  }
+});
+
+loginBtn.addEventListener('click', async ()=>{
+  const user = auth.currentUser;
+  if(user){ await auth.signOut(); alert('Signed out'); return; }
+  const provider = new firebase.auth.GoogleAuthProvider();
+  try{
+    const res = await auth.signInWithPopup(provider);
+    if(ADMINS.includes(res.user.email)) alert('Admin signed in: ' + res.user.email);
+    else alert('Signed in: ' + res.user.email);
+  }catch(e){ alert('Sign-in failed: '+e.message) }
+});
+
+openAdminBtn.addEventListener('click', ()=> window.open('admin.html','_blank'));
+
+/* Firestore realtime listeners */
+const airdropsCol = db.collection('airdrops');
+const newsCol = db.collection('news');
+
+function escapeHtml(s){ return (s||'').toString().replace(/[&<>"']/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c]); }
+function escapeAttr(s){ return (s||'#').replace(/"/g,'') }
+
+airdropsCol.orderBy('createdAt','desc').onSnapshot(snap=>{
+  $('airdropsList').innerHTML = '';
+  snap.forEach(doc=>{
+    const d = doc.data();
+    const div = document.createElement('div'); div.className='panel-item';
+    div.innerHTML = `<div><strong>${escapeHtml(d.title)}</strong></div><div class="small">${escapeHtml(d.date||'TBA')} • ${escapeHtml(d.author||'anon')}</div>
+      <div style="margin-top:8px"><a class="btn secondary" href="${escapeAttr(d.link||'#')}" target="_blank">Open</a></div>`;
+    $('airdropsList').appendChild(div);
+  });
+});
+
+newsCol.orderBy('createdAt','desc').onSnapshot(snap=>{
+  $('newsList').innerHTML = '';
+  snap.forEach(doc=>{
+    const d = doc.data();
+    const div = document.createElement('div'); div.className='panel-item';
+    div.innerHTML = `<div><strong>${escapeHtml(d.title)}</strong></div><div class="small">${escapeHtml(d.time||'')} • ${escapeHtml(d.author||'anon')}</div>
+      <div style="margin-top:8px"><a class="btn" href="${escapeAttr(d.link||'#')}" target="_blank">Open</a></div>`;
+    $('newsList').appendChild(div);
+  });
+});
+
+/* CoinGecko + TF.js model section */
+const COINGECKO = 'https://api.coingecko.com/api/v3';
+let running = true;
+let priceHistory = {}; // id -> [prices]
+const HISTORY_LEN = 80;
+const MODEL_WINDOW = 8;
+const modelStore = {};
+
+function recordPrice(id,p){
+  if(!priceHistory[id]) priceHistory[id]=[];
+  priceHistory[id].push(p);
+  if(priceHistory[id].length>HISTORY_LEN) priceHistory[id].shift();
+}
+function fmtNumber(n){ return Number(n).toLocaleString(undefined, {maximumFractionDigits:2}) }
+
+async function fetchTopCoins(limit=50){
+  try{
+    const res = await fetch(`${COINGECKO}/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=${limit}&page=1&sparkline=false`);
+    if(!res.ok) throw new Error('Coingecko error');
+    return await res.json();
+  }catch(e){ console.error(e); return [] }
+}
+
+function computePredictionText(id){
+  const arr = priceHistory[id]||[];
+  if(arr.length < MODEL_WINDOW+6) return 'training';
+  const m = modelStore[id];
+  if(!m) return 'training';
+  try{
+    const inputArr = arr.slice(-MODEL_WINDOW);
+    const norm = inputArr.map(v => v / inputArr[inputArr.length-1]);
+    const input = tf.tensor2d([norm],[1,MODEL_WINDOW]);
+    const out = m.predict(input);
+    const pred = out.dataSync()[0];
+    input.dispose(); out.dispose();
+    if(pred > 1.002) return 'Up';
+    if(pred < 0.998) return 'Down';
+    return 'Flat';
+  }catch(e){ console.error(e); return '—' }
+}
+
+async function buildAndTrainModelFor(id){
+  const arr = priceHistory[id]||[];
+  if(arr.length < MODEL_WINDOW+12) return;
+  const X=[], Y=[];
+  for(let i=0;i+MODEL_WINDOW < arr.length;i++){
+    const x = arr.slice(i, i+MODEL_WINDOW);
+    X.push(x.map(v => v / x[x.length-1]));
+    Y.push(arr[i+MODEL_WINDOW] / x[x.length-1]);
+  }
+  if(X.length < 8) return;
+  const xs = tf.tensor2d(X);
+  const ys = tf.tensor2d(Y, [Y.length,1]);
+  const model = tf.sequential();
+  model.add(tf.layers.dense({units: 32, activation:'relu', inputShape:[MODEL_WINDOW]}));
+  model.add(tf.layers.dense({units:16, activation:'relu'}));
+  model.add(tf.layers.dense({units:1, activation:'linear'}));
+  model.compile({optimizer: tf.train.adam(0.01), loss:'meanSquaredError'});
+  try{
+    await model.fit(xs, ys, {epochs: 25, batchSize: 16, verbose:0});
+    modelStore[id] = model;
+    $('modelInfo').innerText = `Model trained for ${id} (samples: ${X.length})`;
+  }catch(e){ console.error(e); }
+  xs.dispose(); ys.dispose();
+}
+
+function createRow(i,c){
+  const tr = document.createElement('tr');
+  tr.id = 'coin-'+c.id;
+  recordPrice(c.id, c.current_price);
+  const predText = computePredictionText(c.id);
+  tr.innerHTML = `
+    <td style="width:40px">${i}</td>
+    <td>
+      <div style="display:flex;gap:8px;align-items:center">
+        <img src="${c.image}" style="width:28px;height:28px;border-radius:6px"/>
+        <div>
+          <div style="font-weight:700">${c.name} <span class="small">${c.symbol.toUpperCase()}</span></div>
+        </div>
+      </div>
+    </td>
+    <td class="price">$${fmtNumber(c.current_price)}</td>
+    <td class="change ${c.price_change_percentage_24h>=0 ? 'up' : 'down'}">${c.price_change_percentage_24h ? c.price_change_percentage_24h.toFixed(2)+'%' : ''}</td>
+    <td>$${fmtNumber(c.market_cap)}</td>
+    <td id="pred-${c.id}">${predText}</td>
+  `;
+  return tr;
+}
+
+async function renderCoins(){
+  const limit = parseInt($('limitSelect').value || 50);
+  const list = await fetchTopCoins(limit);
+  const body = $('coinsBody'); body.innerHTML = '';
+  list.forEach((c,i)=>{
+    body.appendChild(createRow(i+1,c));
+    setTimeout(()=>buildAndTrainModelFor(c.id), 300);
+  });
+}
+
+async function updatePricesOnly(){
+  const limit = parseInt($('limitSelect').value || 50);
+  const list = await fetchTopCoins(limit);
+  list.forEach((c,i)=>{
+    recordPrice(c.id, c.current_price);
+    const el = $('coin-'+c.id);
+    if(el){
+      el.querySelector('.price').innerText = '$' + fmtNumber(c.current_price);
+      const ch = el.querySelector('.change');
+      if(ch) ch.innerText = (c.price_change_percentage_24h||0).toFixed(2)+'%';
+      const pred = computePredictionText(c.id);
+      const predEl = $('pred-'+c.id);
+      if(predEl) predEl.innerText = pred;
+      if(Math.random() < 0.12) buildAndTrainModelFor(c.id);
+    } else {
+      const body = $('coinsBody');
+      body.appendChild(createRow(i+1,c));
+    }
+  });
+}
+
+/* auto updater */
+let updater = null;
+function startUpdater(){
+  if(updater) clearInterval(updater);
+  const interval = parseInt($('intervalSelect').value || 5000);
+  updater = setInterval(()=>{ if(running) updatePricesOnly(); }, interval);
+  updatePricesOnly();
+}
+
+/* search */
+$('searchInput').addEventListener('input', async e=>{
+  const q = e.target.value.trim().toLowerCase();
+  if(!q){ renderCoins(); return; }
+  try{
+    const s = await fetch(`${COINGECKO}/search?query=${encodeURIComponent(q)}`).then(r=>r.json());
+    const ids = s.coins.slice(0,30).map(x=>x.id).join(',');
+    if(!ids) { $('coinsBody').innerHTML = '<tr><td colspan="6" class="small">No coins</td></tr>'; return; }
+    const data = await fetch(`${COINGECKO}/coins/markets?vs_currency=usd&ids=${ids}&order=market_cap_desc&per_page=50&page=1&sparkline=false`).then(r=>r.json());
+    $('coinsBody').innerHTML = '';
+    data.forEach((c,i)=>{ $('coinsBody').appendChild(createRow(i+1,c)); setTimeout(()=>buildAndTrainModelFor(c.id),200); });
+  }catch(e){ console.error(e); }
+});
+
+/* UI events */
+$('refreshBtn').addEventListener('click', ()=>renderCoins());
+$('limitSelect').addEventListener('change', ()=>renderCoins());
+$('intervalSelect').addEventListener('change', ()=>{ startUpdater(); });
+$('toggleAuto').addEventListener('click', ()=>{ running = !running; $('toggleAuto').innerText = running ? 'Pause' : 'Resume'; });
+$('closeModal').addEventListener('click', ()=>$('modal').style.display='none');
+
+/* init */
+(function init(){
+  renderCoins();
+  startUpdater();
+})();
+</script>
+</body>
+</html>
